@@ -1,16 +1,22 @@
 use bytes::Bytes;
-use std::path::Path;
+use std::{
+    fs::{DirBuilder, File},
+    io,
+    path::Path,
+};
 use thiserror::Error as ThisError;
 
 #[derive(Clone, Copy, Debug, Default)]
-enum OpenOptions {
+pub enum OpenOptions {
     #[default]
-    Read,
     ReadWrite,
 }
 
 #[derive(ThisError, Debug)]
-enum Error {}
+pub enum Error {
+    #[error("io error")]
+    Io(#[from] io::Error),
+}
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -26,13 +32,13 @@ struct Log {
 struct KeyDir {}
 
 /// Represents a Bitcask handle.
-struct Bitcask {}
-
-impl Drop for Bitcask {
-    fn drop(&mut self) {}
+pub struct Bitcask {
+    file: File,
 }
 
 impl Bitcask {
+    const ACTIVE_DATAFILE_NAME: &str = "active.bitcask.data";
+
     /// Open a new or existing Bitcask datastore with additional options.
     ///
     /// Valid options include read write (if this process is going to be a
@@ -42,18 +48,32 @@ impl Bitcask {
     /// The directory must be readable and writable by this process, and
     /// only one process may open a Bitcask with read write at a time.
     pub fn open(dir: impl AsRef<Path>, opts: OpenOptions) -> Result<Self> {
-        todo!()
+        DirBuilder::new().recursive(true).create(dir.as_ref())?;
+
+        let file = File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(dir.as_ref().join(Self::ACTIVE_DATAFILE_NAME))?;
+
+        file.lock()?;
+
+        let bitcask = Self { file };
+
+        Ok(bitcask)
     }
 
     /// TODO: Close a Bitcask data store and flush all pending writes
     /// (if any) to disk.
     pub fn close(self) -> Result<()> {
-        todo!()
+        self.file.sync_all()?;
+        Ok(())
     }
 
     /// Force any writes to sync to disk.
     pub fn sync(&self) -> Result<()> {
-        todo!()
+        self.file.sync_data()?;
+        Ok(())
     }
 
     pub fn merge(&mut self) -> Result<()> {
@@ -71,26 +91,18 @@ impl Bitcask {
         Ok(std::iter::empty())
     }
 
-    pub fn put<K, V>(&self, key: Bytes, value: Bytes) -> Result<()> {
+    pub fn put(&self, key: Bytes, value: Bytes) -> Result<()> {
         todo!();
     }
 
-    pub fn get<K>(&mut self, key: K) -> Result<Bytes>
-    where
-        K: AsRef<[u8]>,
-    {
+    pub fn get(&self, key: &[u8]) -> Result<Bytes> {
         todo!()
     }
 
-    pub fn delete<K>(&mut self, key: K) -> Result<Bytes>
-    where
-        K: AsRef<[u8]> + Send + 'static,
-    {
+    pub fn delete(&self, key: &[u8]) -> Result<Bytes> {
         todo!()
     }
 }
-
-impl Bitcask {}
 
 #[cfg(test)]
 mod tests {
