@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 bytes = "1.10.1"
+chrono = "0.4.42"
 thiserror = "2.0.17"

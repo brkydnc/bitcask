@@ -1,8 +1,11 @@
 use bytes::Bytes;
+use chrono::TimeZone;
 use std::{
+    collections::{HashMap, HashSet},
     fs::{DirBuilder, File},
     io,
-    path::Path,
+    os::unix::fs::FileExt,
+    path::{Path, PathBuf},
 };
 use thiserror::Error as ThisError;
 
@@ -22,18 +25,49 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[repr(C)]
 struct Log {
-    crc: u32,
-    timestamp: u32,
-    ksize: u32,
-    vsize: u32,
-    bytes: [u8],
+    // TODO: Add CRC
+    timestamp: i64,
+    key: Bytes,
+    value: Option<Bytes>,
 }
 
-struct KeyDir {}
+struct KeyDirEntry {
+    /// The path to the file datafile.
+    datafile: PathBuf,
+
+    /// The beginning position of the value bytes.
+    vpos: usize,
+
+    /// The size of the value.
+    vsize: usize,
+
+    /// The stored timestamp.
+    timestamp: u32,
+}
+
+struct KeyDir {
+    keys: HashMap<Bytes, KeyDirEntry>,
+}
+
+impl KeyDir {
+    fn new() -> Self {
+        Self {
+            keys: HashMap::new(),
+        }
+    }
+
+    fn get<T>(&self, key: T) -> Option<&KeyDirEntry>
+    where
+        T: AsRef<[u8]>,
+    {
+        self.keys.get(key.as_ref())
+    }
+}
 
 /// Represents a Bitcask handle.
 pub struct Bitcask {
     file: File,
+    keydir: KeyDir,
 }
 
 impl Bitcask {
@@ -58,7 +92,9 @@ impl Bitcask {
 
         file.lock()?;
 
-        let bitcask = Self { file };
+        let keydir = KeyDir::new();
+
+        let bitcask = Self { file, keydir };
 
         Ok(bitcask)
     }
@@ -92,11 +128,27 @@ impl Bitcask {
     }
 
     pub fn put(&self, key: Bytes, value: Bytes) -> Result<()> {
-        todo!();
+        let log = Log {
+            timestamp: chrono::offset::Utc::now().timestamp(),
+            key: key.clone(),
+            value: Some(value),
+        };
+
+        Ok(())
     }
 
-    pub fn get(&self, key: &[u8]) -> Result<Bytes> {
-        todo!()
+    pub fn get<T>(&self, key: T) -> Result<Option<Bytes>>
+    where
+        T: AsRef<[u8]>,
+    {
+        let Some(entry) = self.keydir.get(key) else {
+            return Ok(None);
+        };
+
+        let file = File::options().read(true).open(&entry.datafile)?;
+        let mut buf = Vec::with_capacity(entry.vsize);
+        file.read_at(&mut buf, entry.vpos as u64)?;
+        Ok(Some(Bytes::from_owner(buf)))
     }
 
     pub fn delete(&self, key: &[u8]) -> Result<Bytes> {
