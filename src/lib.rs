@@ -2,12 +2,16 @@ use bincode::{Decode, Encode};
 use bytes::Bytes;
 use std::{
     collections::HashMap,
-    fs::{DirBuilder, File},
+    ffi::OsStr,
+    fs::{DirBuilder, DirEntry, File},
     io::{self, Seek},
     os::unix::fs::FileExt,
     path::{Path, PathBuf},
+    result::Result as StdResult,
+    time::SystemTime,
 };
 use thiserror::Error as ThisError;
+use uuid::{Builder, Timestamp, Uuid};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub enum OpenOptions {
@@ -132,10 +136,11 @@ impl Bitcask {
     pub fn open(dir: impl AsRef<Path>, opts: OpenOptions) -> Result<Self> {
         DirBuilder::new().recursive(true).create(dir.as_ref())?;
 
-        let file_id = FileId::new();
+        let file_id = get_latest_datafile_id(&dir).unwrap_or(FileId::new());
+
         let file = File::options()
             .read(true)
-            .write(true)
+            .append(true)
             .create(true)
             .open(dir.as_ref().join(file_id.datafile_path()))?;
 
@@ -252,19 +257,34 @@ impl Bitcask {
 }
 
 fn timestamp() -> i64 {
-    chrono::offset::Utc::now().timestamp()
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("system time before Unix epoch")
+        .as_nanos() as i64
+}
+
+fn get_latest_datafile_id(dir: impl AsRef<Path>) -> Option<FileId> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(StdResult::ok)
+        .filter_map(|entry| {
+            let filename = entry.file_name();
+            let id = filename.to_str()?.strip_suffix(".bitcask.data")?;
+            id.try_into().ok()
+        })
+        .max()
 }
 
 /// A sortable file identifier.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 struct FileId {
-    id: i64,
+    id: Uuid,
 }
 
 impl FileId {
     fn new() -> Self {
         // TODO: Use UUIDv7 later
-        Self { id: timestamp() }
+        Self { id: Uuid::now_v7() }
     }
 
     fn datafile_path(&self) -> PathBuf {
@@ -273,6 +293,16 @@ impl FileId {
 
     fn hintfile_path(&self) -> PathBuf {
         PathBuf::from(format!("{}.bitcask.hint", self.id))
+    }
+}
+
+impl<'a> TryFrom<&'a str> for FileId {
+    type Error = io::Error;
+
+    fn try_from(value: &'a str) -> StdResult<Self, Self::Error> {
+        Ok(Self {
+            id: value.parse().or(Err(io::ErrorKind::InvalidFilename))?,
+        })
     }
 }
 
