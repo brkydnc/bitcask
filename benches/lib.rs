@@ -1,11 +1,24 @@
-use std::collections::HashMap;
-
 use bitcask::Bitcask;
-use bytes::{Bytes, buf};
+use bytes::Bytes;
 use criterion::{Criterion, criterion_group, criterion_main};
-use tempfile::tempdir;
+use tempfile::{TempDir, tempdir};
 
 const KB: usize = 1 << 10;
+
+/// A benchmark Context for Bitcask.
+struct Context {
+    #[allow(unused)]
+    dir: TempDir,
+    bitcask: Bitcask,
+}
+
+impl Context {
+    fn new() -> Option<Self> {
+        let dir = tempdir().ok()?;
+        let bitcask = Bitcask::open(dir.as_ref(), Default::default()).ok()?;
+        Some(Self { dir, bitcask })
+    }
+}
 
 fn random_bytes(size: usize) -> Vec<u8> {
     let mut bytes = vec![0u8; size];
@@ -17,8 +30,7 @@ fn bench_put(c: &mut Criterion) {
     let mut group = c.benchmark_group("put");
 
     group.bench_function("constant_key_value_size", |b| {
-        let dir = tempdir().unwrap();
-        let mut bitcask = Bitcask::open(&dir, Default::default()).unwrap();
+        let mut ctx = Context::new().unwrap();
 
         let key = Box::leak(vec![0u8; 64].into_boxed_slice());
         let value = Box::leak(vec![0u8; 64].into_boxed_slice());
@@ -27,12 +39,10 @@ fn bench_put(c: &mut Criterion) {
         rand::fill(value);
 
         b.iter(|| {
-            bitcask
+            ctx.bitcask
                 .put(Bytes::from_static(key), Bytes::from_static(value))
                 .unwrap()
         });
-
-        std::fs::remove_dir_all(dir).unwrap();
     });
 }
 
@@ -40,8 +50,7 @@ fn bench_get(c: &mut Criterion) {
     let mut group = c.benchmark_group("get");
 
     group.bench_function("constant_key_value_size", |b| {
-        let dir = tempdir().unwrap();
-        let mut bitcask = Bitcask::open(&dir, Default::default()).unwrap();
+        let mut ctx = Context::new().unwrap();
 
         let bufsize = 2 * KB;
         let itemsize = 64;
@@ -51,7 +60,7 @@ fn bench_get(c: &mut Criterion) {
         let values = Bytes::from_owner(random_bytes(bufsize));
 
         for i in (0..num_items).map(|n| n * itemsize) {
-            bitcask
+            ctx.bitcask
                 .put(
                     keys.slice(i..(i + itemsize)),
                     values.slice(i..(i + itemsize)),
@@ -61,11 +70,9 @@ fn bench_get(c: &mut Criterion) {
 
         b.iter(|| {
             let i = rand::random_range(0..num_items) * itemsize;
-            let value = bitcask.get(keys.slice(i..(i + itemsize))).unwrap();
+            let value = ctx.bitcask.get(keys.slice(i..(i + itemsize))).unwrap();
             std::hint::black_box(value);
         });
-
-        std::fs::remove_dir_all(dir).unwrap();
     });
 }
 
