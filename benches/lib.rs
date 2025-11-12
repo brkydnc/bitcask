@@ -52,7 +52,7 @@ fn bench_get(c: &mut Criterion) {
     group.bench_function("constant_key_value_size", |b| {
         let mut ctx = Context::new().unwrap();
 
-        let bufsize = 2 * KB;
+        let bufsize = 4 * KB;
         let itemsize = 64;
         let num_items = bufsize / itemsize;
 

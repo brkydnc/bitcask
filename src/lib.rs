@@ -283,7 +283,6 @@ struct FileId {
 
 impl FileId {
     fn new() -> Self {
-        // TODO: Use UUIDv7 later
         Self { id: Uuid::now_v7() }
     }
 
@@ -307,7 +306,61 @@ impl<'a> TryFrom<&'a str> for FileId {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn test() {}
+mod test {
+    use super::*;
+    use proptest::{collection, prelude::*, sample::SizeRange};
+    use tempfile::tempdir;
+
+    const SIZE: usize = 16384;
+
+    fn arb_bytes(size: impl Into<SizeRange>) -> impl Strategy<Value = Bytes> {
+        collection::vec(any::<u8>(), size).prop_map(Bytes::from)
+    }
+
+    proptest! {
+        #[test]
+        fn get_should_return_non_for_nonexisting_keys(key in arb_bytes(0..SIZE)) {
+            let dir = tempdir().unwrap();
+            let mut bitcask = Bitcask::open(dir.path(), OpenOptions::default()).unwrap();
+
+            prop_assert!(matches!(bitcask.get(key), Ok(None)));
+        }
+
+        #[test]
+        fn standalone_put_should_succeed(key in arb_bytes(0..SIZE), value in arb_bytes(0..SIZE)) {
+            let dir = tempdir().unwrap();
+            let mut bitcask = Bitcask::open(dir.path(), OpenOptions::default()).unwrap();
+
+            prop_assert!(matches!(bitcask.put(key.clone(), value.clone()), Ok(_)));
+            prop_assert_eq!(bitcask.get(&key).unwrap().unwrap(), value);
+        }
+
+        #[test]
+        fn get_should_return_some_for_existing_keys(key in arb_bytes(0..SIZE), value in arb_bytes(0..SIZE)) {
+            let dir = tempdir().unwrap();
+            let mut bitcask = Bitcask::open(dir.path(), OpenOptions::default()).unwrap();
+
+            bitcask.put(key.clone(), value.clone()).unwrap();
+            prop_assert_eq!(bitcask.get(key).unwrap().unwrap(), value);
+        }
+
+        #[test]
+        fn delete_should_not_fail_for_nonexisting_keys(key in arb_bytes(0..SIZE)) {
+            let dir = tempdir().unwrap();
+            let mut bitcask = Bitcask::open(dir.path(), OpenOptions::default()).unwrap();
+
+            prop_assert!(matches!(bitcask.delete(&key), Ok(())));
+            prop_assert!(matches!(bitcask.get(&key), Ok(None)));
+        }
+
+        #[test]
+        fn delete_should_not_fail_for_existing_keys(key in arb_bytes(0..SIZE), value in arb_bytes(0..SIZE)) {
+            let dir = tempdir().unwrap();
+            let mut bitcask = Bitcask::open(dir.path(), OpenOptions::default()).unwrap();
+
+            bitcask.put(key.clone(), value.clone()).unwrap();
+            prop_assert!(matches!(bitcask.delete(&key), Ok(())));
+            prop_assert!(matches!(bitcask.get(&key), Ok(None)));
+        }
+    }
 }
